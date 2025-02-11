@@ -1,25 +1,23 @@
+const fs = require("fs");
 const login = require("ws3-fca");
 const express = require("express");
 const axios = require("axios");
 const app = express();
 
-// Charger la configuration depuis config.json
-const fs = require("fs");
+// Load configuration from config.json
 const config = JSON.parse(fs.readFileSync("config.json", "utf8"));
 
-// Charger appstate depuis les variables d'environnement
+// Load appstate from appstate.json
 let appState = null;
 try {
-    appState = JSON.parse(process.env.APPSTATE); // Charger depuis la variable d'environnement
-    console.log("Appstate chargé avec succès depuis les variables d'environnement.");
+    appState = JSON.parse(fs.readFileSync("appstate.json", "utf8"));
 } catch (error) {
-    console.error("Échec du chargement de l'appstate depuis l'environnement", error);
-    process.exit(1); // Quitter l'application si appstate n'est pas chargé
+    console.error("Failed to load appstate.json", error);
 }
 
 const port = config.port || 3000;
 
-// Charger les commandes depuis le dossier cmds
+// Load commands from cmds folder
 const commandFiles = fs.readdirSync('./cmds').filter(file => file.endsWith('.js'));
 const commands = {};
 commandFiles.forEach(file => {
@@ -27,11 +25,11 @@ commandFiles.forEach(file => {
     commands[command.name] = command;
 });
 
-// Object pour suivre les commandes actives par utilisateur
+// Object to track active commands per user
 let activeCommands = {};
 
 login({ appState }, (err, api) => {
-    if (err) return console.error("Erreur de connexion :", err);
+    if (err) return console.error(err);
 
     api.setOptions({
         forceLogin: true,
@@ -46,49 +44,49 @@ login({ appState }, (err, api) => {
         const senderId = event.senderID;
         const attachments = event.attachments || [];
 
-        // Vérifier si l'utilisateur a une commande active
+        // Check if the user has an active command
         if (activeCommands[senderId]) {
             const activeCommand = activeCommands[senderId];
             if (message.toLowerCase() === "stop") {
-                // Désactiver la commande active pour l'utilisateur
+                // Disable the active command for the user
                 delete activeCommands[senderId];
                 api.sendMessage(`La commande ${activeCommand} a été désactivée avec succès.`, event.threadID);
                 return;
             } else if (commands[activeCommand]) {
-                // Continuer la conversation avec la commande active
+                // Continue conversation with active command
                 return commands[activeCommand].execute(api, event, [message]);
             }
         }
 
-        // Vérifier s'il s'agit d'une commande avec un préfixe
+        // Check for a command with prefix
         if (message.startsWith(prefix)) {
             const args = message.slice(prefix.length).split(/ +/);
             const commandName = args.shift().toLowerCase();
 
             if (commands[commandName]) {
                 if (commandName === "help") {
-                    // La commande help n'a pas besoin d'une commande stop
+                    // Help command doesn't need a stop command
                     return commands[commandName].execute(api, event, args);
                 }
 
-                // Définir une commande active pour l'utilisateur
+                // Set active command for the user
                 activeCommands[senderId] = commandName;
 
-                // Exécuter la commande sélectionnée
+                // Execute the selected command
                 return commands[commandName].execute(api, event, args);
             } else {
-                // Si la commande n'existe pas, utiliser l'API Gemini
+                // If the command does not exist, let Gemini handle it
                 api.sendMessage("⏳ Veuillez patienter un instant pendant que Bruno traite votre demande...", event.threadID);
                 axios.post('https://gemini-sary-prompt-espa-vercel-api.vercel.app/api/gemini', {
                     prompt: message,
                     customId: senderId
                 }).then(response => {
                     api.sendMessage(response.data.message, event.threadID);
-                }).catch(err => console.error("Erreur API :", err));
+                }).catch(err => console.error("API error:", err));
             }
         }
 
-        // Si le message contient des pièces jointes, les traiter avec l'API Gemini
+        // If the message contains attachments, process with Gemini API
         if (attachments.length > 0 && attachments[0].type === 'photo') {
             api.sendMessage("⏳💫 Veuillez patienter un instant pendant que Bruno analyse votre image...", event.threadID);
 
@@ -111,9 +109,9 @@ login({ appState }, (err, api) => {
                 });
             }).then(response => {
                 api.sendMessage(response.data.message, event.threadID);
-            }).catch(err => console.error("Erreur OCR ou réponse :", err));
+            }).catch(err => console.error("OCR/Response error:", err));
         } else if (!message.startsWith(prefix)) {
-            // Si aucun préfixe, fallback à l'API Gemini
+            // If there's no command, fallback to Gemini API
             api.sendMessage("⏳ Veuillez patienter un instant pendant que Bruno traite votre demande...", event.threadID);
 
             axios.post('https://gemini-sary-prompt-espa-vercel-api.vercel.app/api/gemini', {
@@ -121,12 +119,12 @@ login({ appState }, (err, api) => {
                 customId: senderId
             }).then(response => {
                 api.sendMessage(response.data.message, event.threadID);
-            }).catch(err => console.error("Erreur API :", err));
+            }).catch(err => console.error("API error:", err));
         }
     }
 
     api.listenMqtt((err, event) => {
-        if (err) return console.error("Erreur de connexion MQTT :", err);
+        if (err) return console.error("Listening error:", err);
         if (event.type === "message") handleMessage(event);
     });
 });
@@ -136,5 +134,6 @@ app.get("/", (req, res) => {
 });
 
 app.listen(port, () => {
-    console.log(`Le serveur fonctionne sur http://localhost:${port}`);
+    console.log(`Server is running on http://localhost:${port}`);
 });
+    
